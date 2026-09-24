@@ -13,8 +13,18 @@ htmlcov/
 *.db
 *.db-shm
 *.db-wal
+*.db-journal
 *.sqlite3
+
+# Frontend
+node_modules/
+dist/
+*.local
+storybook-static/
+coverage/
 
 # Sistema operacional e IDE
 .DS_Store
+Thumbs.db
 .vscode/
+.idea/
