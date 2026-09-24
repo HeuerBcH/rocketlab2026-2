@@ -1,96 +1,7 @@
-from dataclasses import dataclass, field
-from datetime import datetime
-
 import httpx
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
-from app.movies.models import (
-    DimCompany,
-    DimGenre,
-    DimMovie,
-    DimPerson,
-    DimReview,
-    FactMoviePerformance,
-    MovieReview,
-)
 
 MOVIES_URL = "/api/v1/movies"
-
-
-@dataclass
-class MovieSpec:
-    id: str
-    titulo: str
-    ano: int
-    generos: list[str]
-    diretor: str
-    popularidade: float | None
-    notas: list[float] = field(default_factory=list)
-
-
-SPECS = [
-    MovieSpec("cidade", "Cidade de Deus", 2002, ["Drama"], "Fernando Meirelles", 50.0, [9.0, 7.0]),
-    MovieSpec(
-        "pokemon", "Pokémon: O Filme", 1998, ["Animação", "Aventura"], "Kunihiko Yuyama", 80.0
-    ),
-    MovieSpec("lobo", "100% Lobo", 2020, ["Animação"], "Alexs Stadermann", 10.0, [4.0]),
-    MovieSpec("tropa", "Tropa de Elite", 2007, ["Drama"], "José Padilha", None, [10.0]),
-]
-
-
-@pytest.fixture
-async def catalog(sessions: async_sessionmaker[AsyncSession]) -> None:
-    """Catálogo pequeno respeitando as invariantes da carga (um resumo por filme)."""
-
-    async with sessions() as db:
-        genres = {
-            name: DimGenre(sk_genre_id=f"g-{name}", nome_genero=name)
-            for name in ("Drama", "Animação", "Aventura")
-        }
-        extra_people = [
-            DimPerson(sk_person_id="p-alice", nome_pessoa="Alice Braga", tipo_pessoa="Ator"),
-            DimPerson(
-                sk_person_id="p-braulio", nome_pessoa="Bráulio Mantovani", tipo_pessoa="Roteirista"
-            ),
-        ]
-        for spec in SPECS:
-            people = [
-                DimPerson(
-                    sk_person_id=f"p-{spec.id}", nome_pessoa=spec.diretor, tipo_pessoa="Diretor"
-                )
-            ]
-            if spec.id == "cidade":
-                people += extra_people
-            movie = DimMovie(
-                sk_movie_id=spec.id,
-                id_filme=f"tmdb-{spec.id}",
-                titulo=spec.titulo,
-                ano_lancamento=spec.ano,
-                sinopse=f"Sinopse de {spec.titulo}",
-                genres=[genres[name] for name in spec.generos],
-                people=people,
-                companies=[DimCompany(sk_company_id="c-o2", nome_produtora="O2 Filmes")]
-                if spec.id == "cidade"
-                else [],
-                performance=FactMoviePerformance(popularidade=spec.popularidade),
-                reviews_summary=DimReview(
-                    qtd_avaliacoes_usuarios=len(spec.notas),
-                    nota_media_usuarios=sum(spec.notas) / len(spec.notas) if spec.notas else None,
-                ),
-                reviews=[
-                    MovieReview(
-                        sk_movie_review_id=f"r-{spec.id}-{index}",
-                        nome=f"Pessoa {index}",
-                        nota=nota,
-                        comentario=f"Comentário {index}",
-                        created_at=datetime(2026, 1, index + 1),
-                    )
-                    for index, nota in enumerate(spec.notas)
-                ],
-            )
-            db.add(movie)
-        await db.commit()
 
 
 def titles(response: httpx.Response) -> list[str]:
@@ -276,7 +187,7 @@ async def test_list_reviews_newest_first_and_paginated(client: httpx.AsyncClient
             "nome": "Pessoa 1",
             "nota": 7.0,
             "comentario": "Comentário 1",
-            "created_at": "2026-01-02T00:00:00",
+            "created_at": "2026-01-02T00:00:00Z",
         }
     ]
 

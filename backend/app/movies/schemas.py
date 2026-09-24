@@ -1,12 +1,21 @@
 """Contratos de entrada e saída da API do catálogo de filmes."""
 
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from enum import StrEnum
 from math import ceil
-from typing import Generic, TypeVar
+from typing import Annotated, Generic, Self, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
+from app.core.text import normalize_text
 from app.movies.models import DimMovie, DimReview, FactMoviePerformance, MovieReview
 
 T = TypeVar("T")
@@ -175,5 +184,185 @@ class ReviewOut(BaseModel):
             nome=review.nome,
             nota=review.nota,
             comentario=review.comentario,
-            created_at=review.created_at,
+            # O SQLite guarda UTC sem fuso; explicitá-lo evita o front tratar como hora local.
+            created_at=review.created_at.replace(tzinfo=UTC),
         )
+
+
+class ReviewCreated(ReviewOut):
+    """Avaliação criada e o resumo do filme já recalculado."""
+
+    avaliacao: RatingSummary
+
+
+# --------------------------------------------------------------------------- #
+# Entradas (escrita)
+# --------------------------------------------------------------------------- #
+
+MIN_YEAR = 1888  # Primeiro filme conhecido (Roundhay Garden Scene).
+MAX_YEAR = 2100
+
+
+def collapse_spaces(value: str) -> str:
+    return " ".join(value.split())
+
+
+Title = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=500),
+    AfterValidator(collapse_spaces),
+]
+PersonName = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=255),
+    AfterValidator(collapse_spaces),
+]
+Synopsis = Annotated[str, StringConstraints(strip_whitespace=True, max_length=4000)]
+GenreName = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=50),
+    AfterValidator(collapse_spaces),
+]
+Url = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, max_length=2048, pattern=r"^https?://\S+$"),
+]
+Year = Annotated[int, Field(ge=MIN_YEAR, le=MAX_YEAR)]
+Duration = Annotated[int, Field(ge=1, le=1000, description="Duração em minutos")]
+GenreNames = Annotated[
+    list[GenreName],
+    Field(
+        max_length=10,
+        description="Nomes; reaproveita gêneros existentes (GET /genres) ou cria novos",
+    ),
+]
+DirectorNames = Annotated[
+    list[PersonName],
+    Field(max_length=10, description="Nomes; reaproveita diretores existentes"),
+]
+
+
+class MovieStatus(StrEnum):
+    """Situações presentes no catálogo original."""
+
+    LANCADO = "Lançado"
+    POS_PRODUCAO = "Pós-Produção"
+    EM_PRODUCAO = "Em Produção"
+    PLANEJADO = "Planejado"
+
+
+def unique_names(values: list[str]) -> list[str]:
+    """Remove nomes repetidos, ignorando acentos e maiúsculas (mantém o primeiro)."""
+
+    seen: dict[str | None, str] = {}
+    for value in values:
+        seen.setdefault(normalize_text(value), value)
+    return list(seen.values())
+
+
+class MovieWriteBase(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("generos", "diretores", mode="after", check_fields=False)
+    @classmethod
+    def _unique_names(cls, value: list[str] | None) -> list[str] | None:
+        return unique_names(value) if value is not None else None
+
+    @field_validator("sinopse", "url_poster", "url_backdrop", mode="before", check_fields=False)
+    @classmethod
+    def _blank_as_none(cls, value: object) -> object:
+        return None if isinstance(value, str) and not value.strip() else value
+
+
+class MovieCreate(MovieWriteBase):
+    """Cadastro de filme.
+
+    A obrigatoriedade segue o modelo de dados (como a atividade orienta para a
+    escala de notas): só o título é NOT NULL em ``dim_movies``. Os demais campos
+    são opcionais, mas validados quando enviados. Informando só a data de
+    lançamento, o ano é preenchido a partir dela.
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "titulo": "Ainda Estou Aqui",
+                    "ano_lancamento": 2024,
+                    "generos": ["Drama", "History"],
+                    "diretores": ["Walter Salles"],
+                    "sinopse": "Uma mulher reconstrói a vida após o desaparecimento do marido.",
+                    "duracao_minutos": 137,
+                    "status_filme": "Lançado",
+                }
+            ]
+        }
+    )
+
+    titulo: Title
+    ano_lancamento: Year | None = None
+    generos: GenreNames = Field(default_factory=list)
+    diretores: DirectorNames = Field(default_factory=list)
+    sinopse: Synopsis | None = None
+    data_lancamento: date | None = None
+    duracao_minutos: Duration | None = None
+    status_filme: MovieStatus | None = None
+    url_poster: Url | None = None
+    url_backdrop: Url | None = None
+
+
+class MovieUpdate(MovieWriteBase):
+    """Atualização parcial: só os campos enviados são alterados.
+
+    Mesmas regras do cadastro: o título não pode ser removido; campos opcionais
+    podem ser limpos com ``null`` (ou ``[]`` para gêneros e diretores).
+    """
+
+    model_config = ConfigDict(json_schema_extra={"examples": [{"duracao_minutos": 140}]})
+
+    titulo: Title | None = None
+    ano_lancamento: Year | None = None
+    generos: GenreNames | None = None
+    diretores: DirectorNames | None = None
+    sinopse: Synopsis | None = None
+    data_lancamento: date | None = None
+    duracao_minutos: Duration | None = None
+    status_filme: MovieStatus | None = None
+    url_poster: Url | None = None
+    url_backdrop: Url | None = None
+
+    @model_validator(mode="after")
+    def _required_fields_not_null(self) -> Self:
+        if "titulo" in self.model_fields_set and self.titulo is None:
+            raise ValueError("titulo não pode ser nulo")
+        for name in ("generos", "diretores"):
+            if name in self.model_fields_set and getattr(self, name) is None:
+                raise ValueError(f"{name} não pode ser nulo; use [] para remover todos")
+        return self
+
+
+class ReviewCreate(BaseModel):
+    """Nova avaliação: nota de 0 a 10 e resenha em texto."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "examples": [{"nome": "Maria", "nota": 8.5, "comentario": "Atuações excelentes."}]
+        },
+    )
+
+    nome: Annotated[
+        str,
+        StringConstraints(strip_whitespace=True, min_length=1, max_length=120),
+        AfterValidator(collapse_spaces),
+    ]
+    nota: float = Field(ge=0, le=10, allow_inf_nan=False, description="Escala de 0 a 10")
+    comentario: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=4000)
+    ]
+
+    @field_validator("nota")
+    @classmethod
+    def _one_decimal(cls, value: float) -> float:
+        # Mesma precisão das notas do catálogo (ex.: 8.5); evita 7.3333333.
+        return round(value, 1)
