@@ -29,14 +29,32 @@ ou rotinas de carga.
 
 Requer Python 3.11 ou superior.
 
+**Linux/macOS**
+
 ```bash
 cd backend
 python3 -m venv .venv
 .venv/bin/pip install -e ".[dev]"
 cp .env.example .env
 .venv/bin/alembic upgrade head
+.venv/bin/python -m app.movies.seed --data-dir ../data   # carga dos CSVs (~1 min)
 .venv/bin/uvicorn app.main:app --reload
 ```
+
+**Windows (PowerShell)**
+
+```powershell
+cd backend
+python -m venv .venv
+.venv\Scripts\pip install -e ".[dev]"
+Copy-Item .env.example .env
+.venv\Scripts\alembic upgrade head
+.venv\Scripts\python -m app.movies.seed --data-dir ..\data   # carga dos CSVs (~1 min)
+.venv\Scripts\uvicorn app.main:app --reload
+```
+
+Os CSVs da atividade já acompanham o repositório em `data/` (veja
+[data/README.md](data/README.md)).
 
 A API mínima ficará disponível em `http://localhost:8000`; use
 `http://localhost:8000/docs` para a documentação automática. O endpoint
@@ -56,8 +74,18 @@ A tabela aceita diretamente as colunas `sk_movie_review_id`, `sk_movie_id`,
 `nome`, `nota` e `comentario` do CSV enviado separadamente. `created_at` é
 gerado pelo banco. O contexto generativo não faz parte desta base.
 
-O repositório não inclui CSVs nem rotinas de carga. Para usar avaliações,
-importe primeiro os filmes em `dim_movies` e depois o CSV de `movie_reviews`.
+### Carga inicial (`app/movies/seed.py`)
+
+- Transação única: qualquer linha inválida desfaz a carga inteira e o erro
+  indica `arquivo:linha`. Com o banco já populado, a carga é recusada; use
+  `--reset` para recarregar do zero.
+- As colunas esperadas vêm dos modelos ORM, e cada valor é convertido pelo tipo
+  da coluna (inteiros serializados como `2375.0`, datas ISO, vazios → `NULL`).
+- Cerca de 4,8 mil sinopses vieram escapadas duas vezes como CSV
+  (`"Julia vê um ""filme""…`); a carga desfaz esse escape.
+- `dim_reviews.csv` **não é importado**: o resumo estava inconsistente com
+  `movies_reviews.csv`. `dim_reviews` é recalculada a partir de `movie_reviews`,
+  a fonte de verdade das avaliações (escala 0–10).
 
 As tabelas são criadas exclusivamente pelo Alembic. Para evoluir os modelos,
 crie uma revisão e aplique-a:
