@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from app.movies.seed import SeedError, clean_synopsis, main, seed
+from app.movies.seed import SeedError, clean_text, main, seed
 
 MOVIE = "m1"
 OTHER_MOVIE = "m2"
@@ -45,7 +45,7 @@ def base_rows() -> dict[str, list[list[str]]]:
                 "http://poster",
                 "",
             ],
-            [OTHER_MOVIE, "11", "Sem Review", "", "", "", "", "", "", ""],
+            [OTHER_MOVIE, "11", '"""Blessed"""', "", "", "", "", "", "", ""],
         ],
         "fact_movies_performance.csv": [
             [
@@ -106,9 +106,15 @@ def test_seed_loads_and_cleans_data(tmp_path: Path, db_path: Path) -> None:
         f"SELECT titulo, sinopse, url_backdrop, ano_lancamento "
         f"FROM dim_movies WHERE sk_movie_id = '{MOVIE}'",
     ) == [('"Weird" Title', 'Uma sinopse com "filme dentro do filme".', None, 2017)]
-    assert query(db_path, "SELECT qtd_tmdb, receita_usd FROM fact_movies_performance") == [
-        (2375, None)
+    assert query(db_path, f"SELECT titulo FROM dim_movies WHERE sk_movie_id = '{OTHER_MOVIE}'") == [
+        ('"Blessed"',)
     ]
+    # Filme sem linha no CSV de desempenho ganha uma linha vazia (um resumo por filme).
+    assert query(
+        db_path,
+        "SELECT sk_movie_id, qtd_tmdb, receita_usd, popularidade "
+        "FROM fact_movies_performance ORDER BY sk_movie_id",
+    ) == [(MOVIE, 2375, None, 24.5), (OTHER_MOVIE, None, None, None)]
     assert query(db_path, "SELECT nome_produtora FROM dim_companies") == [("Estúdio, Ltda",)]
 
 
@@ -116,8 +122,10 @@ def test_seed_rebuilds_review_summary_from_reviews(tmp_path: Path, db_path: Path
     seed(write_csvs(tmp_path / "data"), db_path)
 
     assert query(
-        db_path, "SELECT sk_movie_id, qtd_avaliacoes_usuarios, nota_media_usuarios FROM dim_reviews"
-    ) == [(MOVIE, 2, 5.0)]
+        db_path,
+        "SELECT sk_movie_id, qtd_avaliacoes_usuarios, nota_media_usuarios "
+        "FROM dim_reviews ORDER BY sk_movie_id",
+    ) == [(MOVIE, 2, 5.0), (OTHER_MOVIE, 0, None)]
 
 
 def test_seed_refuses_populated_database_unless_reset(tmp_path: Path, db_path: Path) -> None:
@@ -201,9 +209,30 @@ def test_cli_returns_error_code_and_message(
         ('"Termina citando ""Kyiv Frescoes"""', 'Termina citando "Kyiv Frescoes"'),
         ('"Termina citando ""Kyiv Frescoes""', 'Termina citando "Kyiv Frescoes"'),
         ('Sequência de ""Grizzly"" (1976)', 'Sequência de "Grizzly" (1976)'),
+        ('"""Blessed"""', '"Blessed"'),
+        ("  Nome com espaços  ", "Nome com espaços"),
         ('"Favoritismo de """"La Roja"""" na final."', 'Favoritismo de "La Roja" na final.'),
         ('"Citação" legítima no início.', '"Citação" legítima no início.'),
     ],
 )
-def test_clean_synopsis_undoes_double_csv_escaping(raw: str, expected: str) -> None:
-    assert clean_synopsis(raw) == expected
+def test_clean_text_undoes_double_csv_escaping(raw: str, expected: str) -> None:
+    assert clean_text(raw) == expected
+
+
+def test_seed_merges_dimension_duplicates_created_by_cleaning(
+    tmp_path: Path, db_path: Path
+) -> None:
+    rows = base_rows()
+    # Mesma produtora na origem, diferindo só por uma aspa escapada a mais.
+    rows["dim_companies.csv"] += [['Filmart ""X""', "c2"], ['Filmart ""X"""', "c3"]]
+    rows["bridge_movie_company.csv"] += [[MOVIE, "c2"], [MOVIE, "c3"], [OTHER_MOVIE, "c3"]]
+
+    counts = seed(write_csvs(tmp_path / "data", rows), db_path)
+
+    assert counts["dim_companies"] == 2
+    assert query(
+        db_path, "SELECT sk_company_id, nome_produtora FROM dim_companies ORDER BY sk_company_id"
+    ) == [("c1", "Estúdio, Ltda"), ("c2", 'Filmart "X"')]
+    assert query(
+        db_path, "SELECT sk_movie_id, sk_company_id FROM bridge_movie_company ORDER BY 1, 2"
+    ) == [(MOVIE, "c1"), (MOVIE, "c2"), (OTHER_MOVIE, "c2")]

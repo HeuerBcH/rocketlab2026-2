@@ -9,23 +9,25 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.core.config import get_settings
+from app.core.text import normalize_text
 
 settings = get_settings()
 
 
-def enable_sqlite_foreign_keys(async_engine: AsyncEngine) -> None:
-    """Habilita chaves estrangeiras em cada conexão SQLite."""
+def configure_sqlite_connection(async_engine: AsyncEngine) -> None:
+    """Habilita chaves estrangeiras e registra funções SQL em cada conexão SQLite."""
 
     @event.listens_for(async_engine.sync_engine, "connect")
-    def _set_sqlite_pragma(dbapi_connection: object, connection_record: object) -> None:
+    def _on_connect(dbapi_connection: object, connection_record: object) -> None:
         del connection_record
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()
+        dbapi_connection.create_function("normalize_text", 1, normalize_text, deterministic=True)
 
 
 engine = create_async_engine(settings.database_url, echo=settings.environment == "local")
-enable_sqlite_foreign_keys(engine)
+configure_sqlite_connection(engine)
 AsyncSessionLocal = async_sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
 
 
