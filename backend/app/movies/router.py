@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request, 
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.security import current_admin
 from app.db.session import get_db
 from app.movies import repository, service
 from app.movies.models import PersonType
@@ -36,6 +37,9 @@ Year = Annotated[int | None, Query(ge=1800, le=2100)]
 MOVIE_NOT_FOUND_DETAIL = "Filme não encontrado"
 MOVIE_NOT_FOUND = {404: {"description": MOVIE_NOT_FOUND_DETAIL}}
 INVALID_MOVIE = {422: {"description": "Dados inválidos ou inconsistentes com o catálogo"}}
+UNAUTHORIZED = {401: {"description": "Requer login do administrador"}}
+# Toda escrita é restrita ao administrador; leitura é pública.
+ADMIN_ONLY = [Depends(current_admin)]
 
 
 def movie_not_found() -> HTTPException:
@@ -85,7 +89,8 @@ async def list_movies(
     "",
     response_model=MovieDetail,
     status_code=status.HTTP_201_CREATED,
-    responses=INVALID_MOVIE,
+    dependencies=ADMIN_ONLY,
+    responses={**UNAUTHORIZED, **INVALID_MOVIE},
     summary="Cadastra um filme",
 )
 async def create_movie(
@@ -112,7 +117,8 @@ async def get_movie(movie_id: str, db: DbSession) -> MovieDetail:
 @movies_router.patch(
     "/{movie_id}",
     response_model=MovieDetail,
-    responses={**MOVIE_NOT_FOUND, **INVALID_MOVIE},
+    dependencies=ADMIN_ONLY,
+    responses={**UNAUTHORIZED, **MOVIE_NOT_FOUND, **INVALID_MOVIE},
     summary="Atualiza um filme (parcial)",
 )
 async def update_movie(movie_id: str, payload: MovieUpdate, db: DbSession) -> MovieDetail:
@@ -122,7 +128,8 @@ async def update_movie(movie_id: str, payload: MovieUpdate, db: DbSession) -> Mo
 @movies_router.delete(
     "/{movie_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    responses=MOVIE_NOT_FOUND,
+    dependencies=ADMIN_ONLY,
+    responses={**UNAUTHORIZED, **MOVIE_NOT_FOUND},
     summary="Remove um filme e suas avaliações",
 )
 async def delete_movie(movie_id: str, db: DbSession) -> Response:
@@ -152,7 +159,8 @@ async def list_movie_reviews(
     "/{movie_id}/reviews",
     response_model=ReviewCreated,
     status_code=status.HTTP_201_CREATED,
-    responses=MOVIE_NOT_FOUND,
+    dependencies=ADMIN_ONLY,
+    responses={**UNAUTHORIZED, **MOVIE_NOT_FOUND},
     summary="Adiciona uma avaliação (nota de 0 a 10 e resenha)",
 )
 async def create_review(movie_id: str, payload: ReviewCreate, db: DbSession) -> ReviewCreated:

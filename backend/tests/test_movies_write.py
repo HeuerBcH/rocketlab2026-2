@@ -10,6 +10,13 @@ MOVIES_URL = "/api/v1/movies"
 pytestmark = pytest.mark.usefixtures("catalog")
 
 
+@pytest.fixture
+def client(admin_client: httpx.AsyncClient) -> httpx.AsyncClient:
+    """Toda escrita exige login: os testes deste módulo usam o cliente autenticado."""
+
+    return admin_client
+
+
 def new_movie(**overrides: object) -> dict[str, object]:
     payload: dict[str, object] = {
         "titulo": "Ainda Estou Aqui",

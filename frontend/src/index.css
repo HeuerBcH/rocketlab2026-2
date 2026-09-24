@@ -1,0 +1,70 @@
+@import 'tailwindcss';
+
+/* Tema: violeta-noite com destaque coral e amarelo para as notas. */
+@theme {
+  --font-sans: 'Manrope', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
+
+  --color-bg: #1d1b2a;
+  --color-surface: #28253a;
+  --color-surface-2: #353149;
+  --color-border: #443f5c;
+  --color-text: #f3f1fa;
+  --color-muted: #a9a3c2;
+  --color-accent: #ff6b4a;
+  --color-highlight: #ffd166;
+  --color-danger: #ff5c7a;
+  --color-success: #4fd1a5;
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+  body {
+    @apply bg-bg text-text font-sans antialiased;
+  }
+  h1,
+  h2,
+  h3 {
+    @apply font-display tracking-tight;
+  }
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-accent;
+  }
+}
+
+/* Base dos botões como utilitário: pode ser composta com @apply pelas variantes. */
+@utility btn {
+  @apply inline-flex items-center justify-center gap-2 rounded-full px-5 py-2.5 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+}
+
+@layer components {
+  .card {
+    @apply rounded-2xl border border-border bg-surface;
+  }
+  .meta {
+    @apply text-sm text-muted;
+  }
+  .label {
+    @apply mb-1.5 block text-sm font-semibold;
+  }
+  .input {
+    @apply w-full rounded-xl border border-border bg-surface px-3.5 py-2.5 text-sm placeholder:text-muted/70 focus:border-accent focus:outline-none aria-invalid:border-danger;
+  }
+  .btn-primary {
+    @apply btn bg-accent text-bg hover:bg-highlight;
+  }
+  .btn-ghost {
+    @apply btn bg-surface-2 text-text hover:bg-border;
+  }
+  .btn-danger {
+    @apply btn bg-danger/15 text-danger hover:bg-danger hover:text-bg;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full bg-surface-2 px-3 py-1 text-xs font-semibold;
+  }
+  .field-error {
+    @apply mt-1 text-xs font-medium text-danger;
+  }
+}

@@ -16,7 +16,13 @@ from pydantic import (
 )
 
 from app.core.text import normalize_text
-from app.movies.models import DimMovie, DimReview, FactMoviePerformance, MovieReview
+from app.movies.models import (
+    DimMovie,
+    DimReview,
+    FactMoviePerformance,
+    MovieReview,
+    PersonType,
+)
 
 T = TypeVar("T")
 
@@ -60,7 +66,7 @@ class GenreOut(BaseModel):
 class PersonOut(BaseModel):
     id: str
     nome: str
-    tipo: str
+    tipo: PersonType
 
 
 class RatingSummary(BaseModel):
@@ -141,7 +147,7 @@ class MovieDetail(BaseModel):
 
     @classmethod
     def from_model(cls, movie: DimMovie) -> "MovieDetail":
-        def people(tipo: str) -> list[PersonOut]:
+        def people(tipo: PersonType) -> list[PersonOut]:
             return [
                 PersonOut(id=person.sk_person_id, nome=person.nome_pessoa, tipo=tipo)
                 for person in sorted(movie.people, key=lambda person: person.nome_pessoa)

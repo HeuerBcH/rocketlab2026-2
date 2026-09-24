@@ -9,6 +9,7 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from app.auth.security import password_hasher
 from app.core.config import get_settings
 from app.db.session import configure_sqlite_connection, get_db
 from app.main import app
@@ -23,6 +24,24 @@ from app.movies.models import (
 )
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
+
+ADMIN_USERNAME = "admin"
+ADMIN_PASSWORD = "senha-de-teste"
+ADMIN_PASSWORD_HASH = password_hasher().hash(ADMIN_PASSWORD)
+AUTH_SECRET_KEY = "k" * 32
+
+
+@pytest.fixture(autouse=True)
+def auth_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Credenciais fixas de teste, independentes do backend/.env local."""
+
+    monkeypatch.setenv("ADMIN_USERNAME", ADMIN_USERNAME)
+    monkeypatch.setenv("ADMIN_PASSWORD_HASH", ADMIN_PASSWORD_HASH)
+    monkeypatch.setenv("AUTH_SECRET_KEY", AUTH_SECRET_KEY)
+    monkeypatch.setenv("ACCESS_TOKEN_MINUTES", "60")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 @pytest.fixture
@@ -62,6 +81,22 @@ async def client(sessions: async_sessionmaker[AsyncSession]) -> AsyncIterator[ht
             yield http
     finally:
         app.dependency_overrides.clear()
+
+
+async def login(client: httpx.AsyncClient, password: str = ADMIN_PASSWORD) -> httpx.Response:
+    return await client.post(
+        "/api/v1/auth/token", data={"username": ADMIN_USERNAME, "password": password}
+    )
+
+
+@pytest.fixture
+async def admin_client(client: httpx.AsyncClient) -> httpx.AsyncClient:
+    """Cliente já autenticado como administrador."""
+
+    response = await login(client)
+    assert response.status_code == 200, response.text
+    client.headers["Authorization"] = f"Bearer {response.json()['access_token']}"
+    return client
 
 
 @dataclass

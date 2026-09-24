@@ -11,6 +11,9 @@ dependencies = [
     "pydantic>=2.9.0",
     "pydantic-settings>=2.5.0",
     "alembic>=1.19.2",
+    "pyjwt>=2.10.0",
+    "pwdlib[argon2]>=0.2.1",
+    "python-multipart>=0.0.20",
 ]
 
 [project.optional-dependencies]

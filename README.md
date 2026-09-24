@@ -22,10 +22,22 @@ ou rotinas de carga.
 │   │   └── movies/        # modelos SQLAlchemy do domínio de filmes
 │   ├── migrations/        # ambiente e revisões Alembic
 │   └── tests/
+├── data/                  # CSVs da atividade (carga inicial)
+├── frontend/
+│   └── src/
+│       ├── api/           # cliente tipado (OpenAPI), hooks do TanStack Query
+│       ├── app/           # providers e rotas
+│       ├── components/    # componentes de interface
+│       ├── lib/           # formatação e tradução de gêneros
+│       └── pages/         # telas
 └── README.md
 ```
 
 ## Execução
+
+Rode o **backend** e o **frontend** em terminais separados.
+
+### Backend
 
 Requer Python 3.11 ou superior.
 
@@ -56,9 +68,56 @@ Copy-Item .env.example .env
 Os CSVs da atividade já acompanham o repositório em `data/` (veja
 [data/README.md](data/README.md)).
 
-A API mínima ficará disponível em `http://localhost:8000`; use
+A API ficará disponível em `http://localhost:8000`; use
 `http://localhost:8000/docs` para a documentação automática. O endpoint
 `GET /health` permite conferir se a aplicação iniciou corretamente.
+
+### Autenticação do administrador
+
+A leitura (catálogo, detalhes, avaliações) é pública. **Toda escrita** —
+cadastrar, editar e excluir filmes e publicar avaliações — exige login.
+
+O `.env.example` já traz credenciais de **desenvolvimento**:
+
+| Usuário | Senha |
+|---|---|
+| `admin` | `rocketlab123` |
+
+- No frontend, use **Entrar** no topo da página.
+- No Swagger (`/docs`), use o botão **Authorize** com o mesmo usuário e senha.
+- Para trocar a senha, gere um novo hash e cole em `ADMIN_PASSWORD_HASH` no
+  `backend/.env` (entre aspas simples):
+
+  ```bash
+  .venv/bin/python -m app.auth.hash_password     # Windows: .venv\Scripts\python -m app.auth.hash_password
+  ```
+
+A senha é guardada apenas como hash (Argon2) e o login devolve um JWT válido
+por `ACCESS_TOKEN_MINUTES` (padrão: 60). Se você já tinha o backend instalado,
+rode `pip install -e ".[dev]"` de novo para instalar as dependências da
+autenticação.
+
+### Frontend
+
+Requer Node.js 20 ou superior.
+
+```bash
+cd frontend
+npm install
+cp .env.example .env          # Windows: Copy-Item .env.example .env
+npm run dev
+```
+
+A aplicação ficará disponível em `http://localhost:5173` (a porta liberada no
+CORS do backend). Outros comandos:
+
+| Comando | Função |
+|---|---|
+| `npm test` | Testes (Vitest + Testing Library) |
+| `npm run typecheck` | Checagem de tipos |
+| `npm run lint` | Lint (oxlint) |
+| `npm run build` | Build de produção em `dist/` |
+| `npm run gen:api` | Regenera `src/api/schema.d.ts` a partir do OpenAPI (backend rodando) |
 
 ## Banco de dados e migrações
 
