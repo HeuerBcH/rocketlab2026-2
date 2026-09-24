@@ -12,7 +12,8 @@ Decisões:
   modelos automaticamente.
 - ``dim_reviews.csv`` não é importado. O resumo veio inconsistente com
   ``movies_reviews.csv``, então ``dim_reviews`` é recalculada a partir de
-  ``movie_reviews``, que é a fonte de verdade das avaliações.
+  ``movie_reviews``, que é a fonte de verdade das avaliações. Todo filme recebe
+  uma linha de resumo (e de desempenho), inclusive os ainda não avaliados.
 """
 
 import argparse
@@ -55,6 +56,19 @@ SOURCES: tuple[Source, ...] = (
     Source("movies_reviews.csv", "movie_reviews"),
 )
 
+# Chaves naturais (únicas) das dimensões. Depois da limpeza, a mesma entidade pode
+# aparecer duas vezes na origem (ex.: 'Studio ""Shar""' e 'Studio ""Shar"""'); a
+# duplicata é mesclada na primeira ocorrência e as pontes passam a apontar para ela.
+NATURAL_KEYS: dict[str, tuple[str, ...]] = {
+    "dim_genres": ("nome_genero",),
+    "dim_companies": ("nome_produtora",),
+    "dim_people": ("nome_pessoa", "tipo_pessoa"),
+}
+
+# Pontes são conjuntos de pares; após a mesclagem, um par repetido é ignorado.
+# Violações de chave estrangeira continuam gerando erro (OR IGNORE não as cobre).
+BRIDGE_TABLES = frozenset({"bridge_movie_genre", "bridge_movie_company", "bridge_movie_person"})
+
 # Tabelas limpas no --reset, das dependentes para as independentes.
 RESET_ORDER: tuple[str, ...] = (
     "dim_reviews",
@@ -88,12 +102,9 @@ def to_date(value: str) -> str:
 
 
 def clean_text(value: str) -> str:
-    return value.strip()
-
-
-def clean_synopsis(value: str) -> str:
-    # Parte das sinopses foi escapada duas vezes como CSV: vem envolvida em aspas
-    # (às vezes sem a aspa final) e com as aspas internas duplicadas.
+    # Parte dos textos (sinopses, títulos, nomes) foi escapada duas vezes como CSV:
+    # vem envolvida em aspas (às vezes sem a aspa final) e com as aspas internas
+    # duplicadas.
     value = value.strip()
     # Sem aspas duplicadas, a aspa inicial é uma citação legítima do texto.
     if value.startswith('"') and '""' in value:
@@ -109,8 +120,6 @@ def clean_synopsis(value: str) -> str:
 
 
 def converter_for(column: Column) -> Callable[[str], object]:
-    if column.name == "sinopse":
-        return clean_synopsis
     if isinstance(column.type, Integer):
         return to_int
     if isinstance(column.type, Double | Numeric):
@@ -198,13 +207,36 @@ def insert_batch(
         db.execute("RELEASE seed_batch")
 
 
-def load_table(db: sqlite3.Connection, path: Path, table: Table) -> int:
+Aliases = dict[str, dict[str, str]]
+"""Por coluna de chave (ex.: ``sk_company_id``): ID duplicado -> ID mantido."""
+
+
+def load_table(db: sqlite3.Connection, path: Path, table: Table, aliases: Aliases) -> int:
     names = [column.name for column in csv_columns(table)]
-    sql = f"INSERT INTO {table.name} ({', '.join(names)}) VALUES ({', '.join('?' for _ in names)})"
+    verb = "INSERT OR IGNORE" if table.name in BRIDGE_TABLES else "INSERT"
+    sql = f"{verb} INTO {table.name} ({', '.join(names)}) VALUES ({', '.join('?' for _ in names)})"
+
+    key_positions = [names.index(name) for name in NATURAL_KEYS.get(table.name, ())]
+    pk_name = table.primary_key.columns.values()[0].name
+    pk_position = names.index(pk_name)
+    remaps = [(index, aliases[name]) for index, name in enumerate(names) if name in aliases]
+    canonical_ids: dict[tuple[object, ...], object] = {}
+
     count = 0
     batch: list[tuple[int, tuple[object, ...]]] = []
-    for item in read_rows(path, table):
-        batch.append(item)
+    for line, values in read_rows(path, table):
+        if remaps:
+            row = list(values)
+            for index, mapping in remaps:
+                row[index] = mapping.get(row[index], row[index])
+            values = tuple(row)
+        if key_positions:
+            key = tuple(values[index] for index in key_positions)
+            canonical = canonical_ids.setdefault(key, values[pk_position])
+            if canonical != values[pk_position]:
+                aliases.setdefault(pk_name, {})[values[pk_position]] = canonical
+                continue
+        batch.append((line, values))
         if len(batch) == BATCH_SIZE:
             insert_batch(db, sql, batch, path.name)
             count += len(batch)
@@ -216,14 +248,30 @@ def load_table(db: sqlite3.Connection, path: Path, table: Table) -> int:
 
 
 def rebuild_review_summary(db: sqlite3.Connection) -> int:
-    """Recalcula ``dim_reviews`` (quantidade e média) a partir de ``movie_reviews``."""
+    """Recalcula ``dim_reviews`` (quantidade e média) a partir de ``movie_reviews``.
+
+    Gera uma linha para cada filme; os sem avaliação ficam com quantidade 0.
+    """
 
     db.execute("DELETE FROM dim_reviews")
     cursor = db.execute(
         "INSERT INTO dim_reviews "
         "(sk_review_id, sk_movie_id, qtd_avaliacoes_usuarios, nota_media_usuarios) "
-        "SELECT lower(hex(randomblob(32))), sk_movie_id, COUNT(*), AVG(nota) "
-        "FROM movie_reviews GROUP BY sk_movie_id"
+        "SELECT lower(hex(randomblob(32))), m.sk_movie_id, COUNT(r.nota), AVG(r.nota) "
+        "FROM dim_movies m LEFT JOIN movie_reviews r ON r.sk_movie_id = m.sk_movie_id "
+        "GROUP BY m.sk_movie_id"
+    )
+    return cursor.rowcount
+
+
+def fill_missing_performance(db: sqlite3.Connection) -> int:
+    """Garante uma linha de desempenho por filme (métricas nulas quando ausentes)."""
+
+    cursor = db.execute(
+        "INSERT INTO fact_movies_performance (sk_movie_id, lucro_usd, lucro_brl) "
+        "SELECT m.sk_movie_id, 0, 0 FROM dim_movies m "
+        "WHERE NOT EXISTS (SELECT 1 FROM fact_movies_performance f "
+        "WHERE f.sk_movie_id = m.sk_movie_id)"
     )
     return cursor.rowcount
 
@@ -270,6 +318,7 @@ def seed(
             raise SeedError("O banco já contém filmes. Use --reset para recarregar do zero.")
 
         counts: dict[str, int] = {}
+        aliases: Aliases = {}
         db.execute("BEGIN")
         try:
             if populated:
@@ -279,9 +328,16 @@ def seed(
             for source in SOURCES:
                 started = time.perf_counter()
                 table = Base.metadata.tables[source.table]
-                counts[source.table] = load_table(db, paths[source.table], table)
+                counts[source.table] = load_table(db, paths[source.table], table, aliases)
                 elapsed = time.perf_counter() - started
                 log(f"{source.table:<25} {counts[source.table]:>9,} linhas  ({elapsed:.1f}s)")
+                merged = len(aliases.get(table.primary_key.columns.values()[0].name, {}))
+                if source.table in NATURAL_KEYS and merged:
+                    log(f"{'':<25} {merged:>9,} duplicata(s) mesclada(s)")
+            filled = fill_missing_performance(db)
+            if filled:
+                counts["fact_movies_performance"] += filled
+                log(f"{'fact (sem métricas)':<25} {filled:>9,} linhas criadas")
             counts["dim_reviews"] = rebuild_review_summary(db)
             log(f"{'dim_reviews (recalculada)':<25} {counts['dim_reviews']:>9,} linhas")
         except BaseException:

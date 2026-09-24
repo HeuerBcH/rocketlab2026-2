@@ -81,11 +81,18 @@ gerado pelo banco. O contexto generativo não faz parte desta base.
   `--reset` para recarregar do zero.
 - As colunas esperadas vêm dos modelos ORM, e cada valor é convertido pelo tipo
   da coluna (inteiros serializados como `2375.0`, datas ISO, vazios → `NULL`).
-- Cerca de 4,8 mil sinopses vieram escapadas duas vezes como CSV
-  (`"Julia vê um ""filme""…`); a carga desfaz esse escape.
+- Parte dos textos (≈4,8 mil sinopses, além de alguns títulos, pessoas e
+  produtoras) veio escapada duas vezes como CSV (`"Julia vê um ""filme""…`);
+  a carga desfaz esse escape. Os 3 registros que viraram duplicatas depois da
+  limpeza são mesclados, e as tabelas-ponte passam a apontar para o registro
+  mantido.
 - `dim_reviews.csv` **não é importado**: o resumo estava inconsistente com
   `movies_reviews.csv`. `dim_reviews` é recalculada a partir de `movie_reviews`,
   a fonte de verdade das avaliações (escala 0–10).
+- Todo filme tem exatamente uma linha em `dim_reviews` (quantidade 0 quando não
+  há avaliações) e em `fact_movies_performance`. Essa invariante permite
+  ordenar o catálogo por popularidade e por nota direto pelos índices
+  (migração `0002`), em poucos milissegundos.
 
 As tabelas são criadas exclusivamente pelo Alembic. Para evoluir os modelos,
 crie uma revisão e aplique-a:

@@ -16,6 +16,7 @@ from sqlalchemy import (
     Date,
     Double,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
@@ -187,9 +188,16 @@ class DimPerson(Base):
 
 
 class FactMoviePerformance(Base):
-    """Métricas financeiras e de engajamento; uma ocorrência por filme."""
+    """Métricas financeiras e de engajamento; uma ocorrência por filme.
+
+    Todo filme tem uma linha aqui (mesmo sem métricas), o que permite ordenar o
+    catálogo por popularidade a partir do índice, sem LEFT JOIN.
+    """
 
     __tablename__ = "fact_movies_performance"
+    __table_args__ = (
+        Index("ix_fact_movies_performance_popularidade", "popularidade", "sk_movie_id"),
+    )
 
     sk_movie_id: Mapped[str] = mapped_column(
         String(64), ForeignKey("dim_movies.sk_movie_id", ondelete="CASCADE"), primary_key=True
@@ -230,9 +238,27 @@ class MovieReview(Base):
 
 
 class DimReview(Base):
-    """Resumo consolidado de avaliações por filme."""
+    """Resumo consolidado de avaliações por filme.
+
+    Todo filme tem uma linha aqui (``qtd_avaliacoes_usuarios = 0`` quando ainda
+    não foi avaliado), mantida em sincronia com ``movie_reviews``.
+    """
 
     __tablename__ = "dim_reviews"
+    __table_args__ = (
+        Index(
+            "ix_dim_reviews_nota_media",
+            "nota_media_usuarios",
+            "qtd_avaliacoes_usuarios",
+            "sk_movie_id",
+        ),
+        Index(
+            "ix_dim_reviews_qtd_avaliacoes",
+            "qtd_avaliacoes_usuarios",
+            "nota_media_usuarios",
+            "sk_movie_id",
+        ),
+    )
 
     sk_review_id: Mapped[str] = mapped_column(
         String(64), primary_key=True, default=generate_surrogate_key
