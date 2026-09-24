@@ -151,8 +151,14 @@ async def list_movies(
     return [], await db.scalar(count_statement) or 0
 
 
-async def get_movie(db: AsyncSession, movie_id: str) -> DimMovie | None:
-    return await db.scalar(
+async def get_movie(db: AsyncSession, movie_id: str, *, refresh: bool = False) -> DimMovie | None:
+    """Carrega o filme com todas as relações exibidas no detalhe.
+
+    ``refresh=True`` sobrescreve o que a sessão já tiver em memória; é usado
+    depois de uma escrita para devolver o estado gravado no banco.
+    """
+
+    statement = (
         select(DimMovie)
         .where(DimMovie.sk_movie_id == movie_id)
         .options(
@@ -163,6 +169,9 @@ async def get_movie(db: AsyncSession, movie_id: str) -> DimMovie | None:
             selectinload(DimMovie.reviews_summary),
         )
     )
+    if refresh:
+        statement = statement.execution_options(populate_existing=True)
+    return await db.scalar(statement)
 
 
 async def movie_exists(db: AsyncSession, movie_id: str) -> bool:

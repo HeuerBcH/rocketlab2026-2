@@ -5,9 +5,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import api_router
+from app.auth.router import register_auth_exception_handlers
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.db.session import engine
+from app.movies.router import register_exception_handlers
 
 configure_logging()
 settings = get_settings()
@@ -38,6 +40,8 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.include_router(api_router, prefix=settings.api_v1_prefix)
+    register_exception_handlers(app)
+    register_auth_exception_handlers(app)
 
     @app.get("/health", tags=["health"])
     async def health_check() -> dict[str, str]:
