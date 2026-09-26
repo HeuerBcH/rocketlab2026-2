@@ -46,7 +46,7 @@ Alembic)
 - **Caching de consultas** com TanStack Query. Páginas já visitadas abrem na
   hora, e cada escrita atualiza só o que mudou.
 - **Testes automatizados:** 125 no backend (pytest) e 57 no frontend (Vitest +
-  Testing Library).
+  Testing Library), rodando em CI no GitHub Actions a cada push.
 - **Responsividade:** a grade vai de 2 colunas no celular a 6 no desktop.
 - **Tratamento dos dados de origem:** limpeza dos CSVs, correção das médias e
   mesclagem de duplicatas (detalhes em
@@ -143,6 +143,10 @@ Os testes do backend usam um banco temporário criado pelas próprias migraçõe
 do Alembic, então também validam o schema. Os do frontend simulam a API e
 percorrem os fluxos como um usuário: buscar, avaliar, cadastrar, editar,
 excluir, entrar e sair.
+
+**Integração contínua.** A cada push e pull request, o GitHub Actions
+([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) roda todas as
+verificações da tabela acima, com o backend e o frontend em paralelo.
 
 ---
 
